@@ -102,8 +102,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  // Function removed to fix build error
-
   // Format time in MM:SS format
   const formatTime = (timeInSeconds: number) => {
     const minutes = Math.floor(timeInSeconds / 60);
