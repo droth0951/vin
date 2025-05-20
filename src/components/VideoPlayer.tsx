@@ -5,13 +5,11 @@ import { Card, CardContent } from './ui/card';
 interface VideoPlayerProps {
   videoSrc: string;
   isUrl: boolean;
-  onThumbnailsGenerated: (thumbnails: string[]) => void;
   onClipSelected: (startTime: number, endTime: number) => void;
 }
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
   videoSrc, 
-  onThumbnailsGenerated,
   onClipSelected
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -23,8 +21,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [selectionEnd, setSelectionEnd] = useState<number>(90); // Default 90 seconds
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStartX, setDragStartX] = useState<number>(0);
-  const [selectionWidth, setSelectionWidth] = useState<number>(0);
   const timelineRef = useRef<HTMLDivElement>(null);
+
+  // New: Track which handle is being dragged
+  const [draggingHandle, setDraggingHandle] = useState<null | 'start' | 'end' | 'frame'>(null);
 
   // Handle video metadata loaded
   const handleMetadataLoaded = () => {
@@ -35,52 +35,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const defaultEnd = Math.min(90, duration);
       setSelectionEnd(defaultEnd);
       onClipSelected(0, defaultEnd);
-      
-      // Generate thumbnails once video is loaded
-      generateThumbnails();
     }
-  };
-
-  // Generate thumbnails at different points in the video
-  const generateThumbnails = () => {
-    if (!videoRef.current || !canvasRef.current) return;
-    
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-    
-    const thumbnails: string[] = [];
-    const numThumbnails = 5;
-    const thumbnailPositions = Array.from({ length: numThumbnails }, (_, i) => 
-      i * (video.duration / (numThumbnails + 1))
-    );
-    
-    let thumbnailsGenerated = 0;
-    
-    const captureFrame = (time: number) => {
-      video.currentTime = time;
-      
-      video.onseeked = () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        const thumbnail = canvas.toDataURL('image/jpeg');
-        thumbnails.push(thumbnail);
-        thumbnailsGenerated++;
-        
-        if (thumbnailsGenerated === numThumbnails) {
-          onThumbnailsGenerated(thumbnails);
-          // Reset video to beginning
-          video.currentTime = 0;
-        } else if (thumbnailsGenerated < numThumbnails) {
-          captureFrame(thumbnailPositions[thumbnailsGenerated]);
-        }
-      };
-    };
-    
-    captureFrame(thumbnailPositions[0]);
   };
 
   // Update current time during playback
@@ -109,49 +64,52 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Handle selection frame drag start
-  const handleSelectionDragStart = (e: React.MouseEvent) => {
+  // New: Handle drag start for handles or frame
+  const handleHandleDragStart = (e: React.MouseEvent, handle: 'start' | 'end' | 'frame') => {
+    e.stopPropagation();
     setIsDragging(true);
     setDragStartX(e.clientX);
+    setDraggingHandle(handle);
   };
 
-  // Handle selection frame dragging
-  const handleSelectionDrag = (e: React.MouseEvent) => {
-    if (!isDragging || !timelineRef.current) return;
-    
+  // New: Handle dragging for handles or frame
+  const handleHandleDrag = (e: React.MouseEvent) => {
+    if (!isDragging || !timelineRef.current || !draggingHandle) return;
     const timelineRect = timelineRef.current.getBoundingClientRect();
     const timelineWidth = timelineRect.width;
-    const deltaX = e.clientX - dragStartX;
-    const deltaTime = (deltaX / timelineWidth) * videoDuration;
-    
-    // Ensure selection stays within video bounds and maintains 90 second width
-    let newStart = Math.max(0, selectionStart + deltaTime);
-    let newEnd = newStart + 90;
-    
-    if (newEnd > videoDuration) {
-      newEnd = videoDuration;
-      newStart = Math.max(0, newEnd - 90);
+    const mouseX = e.clientX - timelineRect.left;
+    const time = Math.max(0, Math.min(videoDuration, (mouseX / timelineWidth) * videoDuration));
+    let newStart = selectionStart;
+    let newEnd = selectionEnd;
+    if (draggingHandle === 'start') {
+      newStart = Math.min(time, selectionEnd - 1); // at least 1s
+      if (newEnd - newStart > 90) newStart = newEnd - 90;
+      setSelectionStart(newStart);
+      onClipSelected(newStart, newEnd);
+      if (videoRef.current) videoRef.current.currentTime = newStart;
+    } else if (draggingHandle === 'end') {
+      newEnd = Math.max(time, selectionStart + 1); // at least 1s
+      if (newEnd - newStart > 90) newEnd = newStart + 90;
+      setSelectionEnd(newEnd);
+      onClipSelected(newStart, newEnd);
+      if (videoRef.current) videoRef.current.currentTime = newEnd;
+    } else if (draggingHandle === 'frame') {
+      // Drag whole frame
+      const frameWidth = selectionEnd - selectionStart;
+      let newFrameStart = time - (dragStartX - timelineRect.left) / timelineWidth * videoDuration;
+      newFrameStart = Math.max(0, Math.min(videoDuration - frameWidth, newFrameStart));
+      setSelectionStart(newFrameStart);
+      setSelectionEnd(newFrameStart + frameWidth);
+      onClipSelected(newFrameStart, newFrameStart + frameWidth);
+      if (videoRef.current) videoRef.current.currentTime = newFrameStart;
     }
-    
-    setSelectionStart(newStart);
-    setSelectionEnd(newEnd);
-    onClipSelected(newStart, newEnd);
-    setDragStartX(e.clientX);
   };
 
-  // Handle selection frame drag end
-  const handleSelectionDragEnd = () => {
+  // Handle selection drag end
+  const handleDragEnd = () => {
     setIsDragging(false);
+    setDraggingHandle(null);
   };
-
-  // Calculate selection frame position and width
-  useEffect(() => {
-    if (timelineRef.current && videoDuration > 0) {
-      const startPercent = (selectionStart / videoDuration) * 100;
-      const endPercent = (selectionEnd / videoDuration) * 100;
-      setSelectionWidth(endPercent - startPercent);
-    }
-  }, [selectionStart, selectionEnd, videoDuration]);
 
   // Play selected clip
   const playSelectedClip = () => {
@@ -171,6 +129,78 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       
       videoRef.current.addEventListener('timeupdate', checkTime);
     }
+  };
+
+  // Add keyboard nudge support and instructions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!videoDuration) return;
+      let nudgeAmount = 0;
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        togglePlayPause();
+        return;
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // Nudge by 1 second
+        nudgeAmount = e.key === 'ArrowLeft' ? -1 : 1;
+      } else if (e.key === ',' || e.key === '.') {
+        // Nudge by 1 frame (assuming 30fps)
+        nudgeAmount = e.key === ',' ? -1 / 30 : 1 / 30;
+      }
+      if (nudgeAmount !== 0) {
+        e.preventDefault();
+        // If shift is held, nudge the end handle, else nudge the start handle
+        if (e.shiftKey) {
+          let newEnd = Math.max(selectionStart + 1 / 30, Math.min(videoDuration, selectionEnd + nudgeAmount));
+          if (newEnd - selectionStart > 90) newEnd = selectionStart + 90;
+          setSelectionEnd(newEnd);
+          onClipSelected(selectionStart, newEnd);
+          if (videoRef.current) videoRef.current.currentTime = newEnd;
+        } else {
+          let newStart = Math.min(selectionEnd - 1 / 30, Math.max(0, selectionStart + nudgeAmount));
+          if (selectionEnd - newStart > 90) newStart = selectionEnd - 90;
+          setSelectionStart(newStart);
+          onClipSelected(newStart, selectionEnd);
+          if (videoRef.current) videoRef.current.currentTime = newStart;
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectionStart, selectionEnd, videoDuration, onClipSelected, togglePlayPause]);
+
+  // --- Clamp selection to video duration and keep handles in sync ---
+  useEffect(() => {
+    if (videoDuration > 0) {
+      let newStart = selectionStart;
+      let newEnd = selectionEnd;
+      // Clamp end to video duration
+      if (newEnd > videoDuration) newEnd = videoDuration;
+      // Clamp start to not exceed end
+      if (newStart > newEnd) newStart = newEnd;
+      // Clamp selection to max 90s
+      if (newEnd - newStart > 90) newStart = newEnd - 90;
+      if (newStart < 0) newStart = 0;
+      setSelectionStart(newStart);
+      setSelectionEnd(newEnd);
+      onClipSelected(newStart, newEnd);
+    }
+  }, [videoDuration]);
+
+  // --- Prevent selectionEnd from ever exceeding videoDuration during drag/nudge ---
+  useEffect(() => {
+    if (selectionEnd > videoDuration) {
+      setSelectionEnd(videoDuration);
+      if (selectionStart > videoDuration) setSelectionStart(videoDuration);
+    }
+  }, [selectionEnd, videoDuration]);
+
+  // --- Progress bar for current play position ---
+  const getProgressBarStyle = () => {
+    if (!videoDuration) return { width: '0%' };
+    const percent = (currentTime / videoDuration) * 100;
+    return { width: `${percent}%` };
   };
 
   return (
@@ -209,40 +239,59 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
           {/* Timeline with 90-second selection frame */}
           <div className="space-y-2">
-            <div className="text-sm font-medium">Select 90 seconds for LinkedIn:</div>
+            <div className="text-sm font-medium">Select up to 90 seconds for LinkedIn:</div>
+            {/* Instructions for keyboard controls */}
+            <div className="text-xs text-gray-600 mb-2">
+              <strong>Keyboard controls:</strong> Space = play/pause, Arrow keys = nudge by 1s, <code>,</code>/<code>.</code> = nudge by 1 frame. Hold <strong>Shift</strong> to nudge the end handle.
+            </div>
             <div 
               ref={timelineRef}
               className="relative h-8 bg-gray-200 rounded-md cursor-pointer"
-              onMouseMove={handleSelectionDrag}
-              onMouseUp={handleSelectionDragEnd}
-              onMouseLeave={handleSelectionDragEnd}
+              onMouseMove={handleHandleDrag}
+              onMouseUp={handleDragEnd}
+              onMouseLeave={handleDragEnd}
             >
-              {/* Progress bar */}
+              {/* Progress bar for current play position */}
               <div 
-                className="absolute h-full bg-gray-400 rounded-md"
-                style={{ width: `${(currentTime / videoDuration) * 100}%` }}
+                className="absolute h-full bg-blue-400/60 rounded-md z-0 transition-all duration-150"
+                style={getProgressBarStyle()}
               />
-              
-              {/* Selection frame */}
+              {/* Selection frame with handles */}
               <div 
-                className="absolute h-full bg-primary/40 border-2 border-primary rounded-md flex items-center justify-center cursor-move hover:bg-primary/50 transition-colors"
+                className="absolute h-full bg-primary/60 border-4 border-yellow-400 shadow-lg rounded-md flex items-center justify-between cursor-move hover:bg-primary/70 transition-colors z-10"
                 style={{ 
                   left: `${(selectionStart / videoDuration) * 100}%`,
-                  width: `${selectionWidth}%`
+                  width: `${((selectionEnd - selectionStart) / videoDuration) * 100}%`
                 }}
-                onMouseDown={handleSelectionDragStart}
+                onMouseDown={e => handleHandleDragStart(e, 'frame')}
               >
-                <div className="text-sm font-bold text-white drop-shadow-lg bg-black/30 px-2 py-1 rounded">
-                  {formatTime(selectionEnd - selectionStart)}
+                {/* Start handle */}
+                <div
+                  className="w-4 h-8 bg-yellow-400 border-2 border-yellow-600 rounded-l cursor-ew-resize flex items-center justify-center z-20"
+                  onMouseDown={e => handleHandleDragStart(e, 'start')}
+                  style={{ marginLeft: -8 }}
+                >
+                  <div className="w-1 h-6 bg-yellow-600 rounded" />
+                </div>
+                <div className="flex-1 flex items-center justify-center select-none">
+                  <div className="text-sm font-bold text-white drop-shadow-lg bg-black/40 px-2 py-1 rounded">
+                    {formatTime(selectionEnd - selectionStart)}
+                  </div>
+                </div>
+                {/* End handle */}
+                <div
+                  className="w-4 h-8 bg-yellow-400 border-2 border-yellow-600 rounded-r cursor-ew-resize flex items-center justify-center z-20"
+                  onMouseDown={e => handleHandleDragStart(e, 'end')}
+                  style={{ marginRight: -8 }}
+                >
+                  <div className="w-1 h-6 bg-yellow-600 rounded" />
                 </div>
               </div>
             </div>
-            
             <div className="flex justify-between text-xs text-gray-500">
               <span>{formatTime(selectionStart)}</span>
               <span>{formatTime(selectionEnd)}</span>
             </div>
-            
             <div className="flex space-x-2">
               <Button onClick={playSelectedClip} className="flex-1">
                 Play Selected Clip

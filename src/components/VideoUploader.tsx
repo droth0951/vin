@@ -57,7 +57,7 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected }) => {
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle className="text-center">VIN: Videos in Ninety Seconds</CardTitle>
+        <CardTitle className="text-center">VIN: Video in Ninety</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-6">
@@ -83,10 +83,8 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected }) => {
                 strokeLinejoin="round" 
                 className="text-gray-500"
               >
-                <path d="m21 15-5-5-5 5" />
-                <path d="M16 4v6" />
-                <rect width="20" height="14" x="2" y="6" rx="2" />
-                <path d="M2 16a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2" />
+                <rect x="3" y="7" width="15" height="10" rx="2" />
+                <polygon points="21 7 21 17 17 13 17 11 21 7" />
               </svg>
               <div className="text-lg font-medium">Drag and drop your video here</div>
               <div className="text-sm text-gray-500">or</div>
@@ -104,12 +102,12 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected }) => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="video-url">Or paste a video URL:</Label>
+            <Label htmlFor="video-url">Or paste a video URL or webpage:</Label>
             <form onSubmit={handleUrlSubmit} className="flex space-x-2">
               <Input
                 id="video-url"
                 type="url"
-                placeholder="https://example.com/video.mp4"
+                placeholder="https://example.com/video.mp4 or https://example.com/page-with-video"
                 value={videoUrl}
                 onChange={(e) => setVideoUrl(e.target.value)}
                 className="flex-1"
@@ -118,6 +116,9 @@ const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected }) => {
                 Load Video
               </Button>
             </form>
+            <div className="text-xs text-gray-500 mt-1">
+              Supports direct video URLs, m3u8 streams, and webpages containing videos
+            </div>
           </div>
         </div>
       </CardContent>
